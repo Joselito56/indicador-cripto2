@@ -1,0 +1,113 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Indicador RSI/MACD Colorido</title>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/technicalindicators@3.0.11/dist/browser.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    #controls { margin-bottom: 10px; }
+    label { margin-right: 10px; }
+  </style>
+</head>
+<body>
+  <h2>Indicador RSI/MACD Colorido (API Binance)</h2>
+  <div id="controls">
+    <label>Selecione par:</label>
+    <select id="symbolSelect">
+      <option value="">--Custom--</option>
+      <option value="BTCUSDT">BTC/USDT</option>
+      <option value="ETHUSDT">ETH/USDT</option>
+      <option value="BNBUSDT">BNB/USDT</option>
+      <option value="ADAUSDT">ADA/USDT</option>
+      <option value="XRPUSDT">XRP/USDT</option>
+    </select>
+    <label>Ou digite custom: <input type="text" id="symbolInput" placeholder="Ex: DOGEUSDT"></label>
+    <label>Intervalo: <input type="text" id="interval" value="1h"></label>
+    <button id="load">Carregar Dados</button>
+  </div>
+  <div id="chart" style="width:100%;height:600px;"></div>
+
+  <script>
+    async function fetchKlines(symbol, interval, limit=500) {
+      const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+      const resp = await fetch(url);
+      return resp.json();
+    }
+
+    function computeIndicators(data) {
+      const closes = data.map(d => parseFloat(d[4]));
+      const rsi = technicalindicators.RSI.calculate({ values: closes, period: 14 });
+      const macd = technicalindicators.MACD.calculate({
+        values: closes,
+        fastPeriod: 12,
+        slowPeriod: 26,
+        signalPeriod: 9,
+        SimpleMAOscillator: false,
+        SimpleMASignal: false
+      });
+      return { rsi, macd };
+    }
+
+    function generateSignals(data, rsi, macd) {
+      const signals = [];
+      const offset = data.length - rsi.length;
+      data.forEach((d, i) => {
+        let sig = null;
+        const idx = i - offset;
+        if (idx >= 1 && idx < rsi.length) {
+          const r = rsi[idx];
+          const m = macd[idx];
+          const mPrev = macd[idx - 1];
+          if (r < 30 && m.MACD > m.signal && mPrev.MACD <= mPrev.signal) sig = { color: 'green', symbol:'triangle-up', text:'Sinal de COMPRA' };
+          else if (r >= 30 && r <= 45 && m.MACD > m.signal && mPrev.MACD < m.signal) sig = { color: 'yellow', symbol:'circle', text:'Alerta de COMPRA' };
+          else if (r > 70 && m.MACD < m.signal && mPrev.MACD >= mPrev.signal) sig = { color: 'red', symbol:'triangle-down', text:'Sinal de VENDA' };
+          else if (r >= 55 && r <= 70 && m.MACD < m.signal && mPrev.MACD > m.signal) sig = { color: 'orange', symbol:'circle', text:'Alerta de VENDA' };
+        }
+        signals.push(sig);
+      });
+      return signals;
+    }
+
+    async function drawChart() {
+      const select = document.getElementById('symbolSelect').value;
+      const input = document.getElementById('symbolInput').value.trim().toUpperCase();
+      const symbol = select || input || 'BTCUSDT';
+      const interval = document.getElementById('interval').value;
+      const raw = await fetchKlines(symbol, interval);
+      const dates = raw.map(d => new Date(d[0]));
+      const open = raw.map(d => parseFloat(d[1]));
+      const high = raw.map(d => parseFloat(d[2]));
+      const low = raw.map(d => parseFloat(d[3]));
+      const close = raw.map(d => parseFloat(d[4]));
+
+      const { rsi, macd } = computeIndicators(raw);
+      const signals = generateSignals(raw, rsi, macd);
+
+      const candle = {
+        x: dates, open, high, low, close,
+        type: 'candlestick', name: symbol,
+        increasing: { line: { color: '#333' } }, decreasing: { line: { color: '#999' } }
+      };
+
+      const sigX = [], sigY = [], sigText = [], sigColor = [], sigSymbol = [];
+      signals.forEach((s, i) => {
+        if (s) {
+          sigX.push(dates[i]); sigY.push(close[i]); sigText.push(s.text);
+          sigColor.push(s.color); sigSymbol.push(s.symbol);
+        }
+      });
+      const markers = { x: sigX, y: sigY, mode: 'markers', marker: { color: sigColor, symbol: sigSymbol, size: 10 }, text: sigText, hoverinfo: 'text' };
+
+      const layout = { title: `${symbol} - ${interval}`, xaxis: { rangeslider: { visible: false } } };
+      Plotly.newPlot('chart', [candle, markers], layout);
+    }
+
+    document.getElementById('load').addEventListener('click', drawChart);
+    drawChart();
+  </script>
+</body>
+</html>
